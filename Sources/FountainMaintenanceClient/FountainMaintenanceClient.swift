@@ -17,12 +17,42 @@ public protocol MaintenanceTransport: Sendable {
     func send(_ request: URLRequest, secretReference: MaintenanceSecretReference?) async throws -> (Data, HTTPURLResponse)
 }
 
+/// Supplies a credential only for the duration of one transport operation.
+///
+/// Implementations are host adapters (for example Reframe's SecretStore adapter). The reference is safe to
+/// persist; the secret value is not. A provider must never return the value in a request model, receipt, log, or
+/// error. The closure is the only place the transport may use it.
+public protocol MaintenanceSecretProvider: Sendable {
+    func withSecret<T: Sendable>(
+        reference: MaintenanceSecretReference,
+        operation: @escaping @Sendable (Data) async throws -> T
+    ) async throws -> T
+}
+
 public struct URLSessionMaintenanceTransport: MaintenanceTransport {
     private let session: URLSession
+    private let secretProvider: (any MaintenanceSecretProvider)?
 
-    public init(session: URLSession = .shared) { self.session = session }
+    public init(session: URLSession = .shared, secretProvider: (any MaintenanceSecretProvider)? = nil) {
+        self.session = session
+        self.secretProvider = secretProvider
+    }
 
     public func send(_ request: URLRequest, secretReference: MaintenanceSecretReference?) async throws -> (Data, HTTPURLResponse) {
+        if let secretReference, let secretProvider {
+            return try await secretProvider.withSecret(reference: secretReference) { secret in
+                var authenticatedRequest = request
+                guard let token = String(data: secret, encoding: .utf8), !token.isEmpty else {
+                    throw MaintenanceClientError.transport("maintenance credential is not UTF-8")
+                }
+                authenticatedRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                return try await Self.perform(authenticatedRequest, session: session)
+            }
+        }
+        return try await Self.perform(request, session: session)
+    }
+
+    private static func perform(_ request: URLRequest, session: URLSession) async throws -> (Data, HTTPURLResponse) {
         do {
             let result = try await session.data(for: request)
             guard let response = result.1 as? HTTPURLResponse else { throw MaintenanceClientError.malformedResponse }

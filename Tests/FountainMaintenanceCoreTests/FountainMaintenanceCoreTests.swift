@@ -5,6 +5,15 @@ import FountainMaintenanceTestKit
 import FountainMaintenanceClient
 
 final class FountainMaintenanceCoreTests: XCTestCase {
+    private struct RecordingSecretProvider: MaintenanceSecretProvider {
+        let secret: Data
+        func withSecret<T: Sendable>(reference: MaintenanceSecretReference,
+                                     operation: @escaping @Sendable (Data) async throws -> T) async throws -> T {
+            XCTAssertEqual(reference, FountainMaintenanceFixtures.secretReference)
+            return try await operation(secret)
+        }
+    }
+
     func testTypedClientCarriesIdempotencyAndOpaqueReferenceWithoutCredential() async throws {
         let operation = FountainMaintenanceFixtures.request()
         let receipt = MaintenanceValidator.receipt(for: operation, authorization: .pending)
@@ -16,6 +25,15 @@ final class FountainMaintenanceCoreTests: XCTestCase {
         XCTAssertEqual(requests.count, 1)
         XCTAssertEqual(requests[0].value(forHTTPHeaderField: "Idempotency-Key"), operation.idempotencyKey)
         XCTAssertFalse(String(decoding: requests[0].httpBody ?? Data(), as: UTF8.self).contains("fixture-secret-value"))
+    }
+
+    func testSecretProviderIsAnEphemeralTransportBoundary() async throws {
+        let operation = FountainMaintenanceFixtures.request()
+        let provider = RecordingSecretProvider(secret: Data("fixture-secret-value".utf8))
+        let released = try await provider.withSecret(reference: operation.secretReference!) { secret in
+            String(decoding: secret, as: UTF8.self)
+        }
+        XCTAssertEqual(released, "fixture-secret-value")
     }
 
     func testLedgerReturnsOriginalReceiptForIdempotentRetryAndRejectsCollision() async throws {
