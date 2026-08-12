@@ -14,9 +14,10 @@ manifests, migration manifests, and opaque SecretStore references. It never carr
 
 ## Support boundary
 
-The first declared profile is macOS 14 with Swift 6.1. Linux support is a governed follow-up profile once its network,
-persistence, SecretStore, supervisor, Git, build, and migration evidence exists. “Portable Swift” means the declared
-profile matrix; it does not promise that every Swift runtime supplies every host facility.
+The first declared profiles are macOS 14 and Linux with Swift 6.1-compatible Foundation facilities. This release only
+proves the dependency-free core and typed URL client on those profiles; Linux SecretStore, supervisor, Git, build, and
+migration evidence remain host-adapter work. “Portable Swift” means the declared profile matrix; it does not promise
+that every Swift runtime supplies every host facility.
 
 ## Usage
 

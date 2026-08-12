@@ -18,8 +18,9 @@ dependency coherence before acceptance.
 Plan:
 - Step 1 (status: completed) - Publish core/client/test-kit modules with FCIS repository surfaces.
 - Step 2 (status: completed) - Run offline package tests and inspect the generated release boundary.
-- Step 3 (status: pending) - Tag and push the first release, then switch Reframe to the remote package.
-- Step 4 (status: pending) - Verify Reframe resolves the exact upstream revision and focused consumer tests pass.
+- Step 3 (status: completed) - Tag and push the first release, then switch Reframe to the remote package.
+- Step 4 (status: in_progress) - Correct the package profile for Linux server consumption and release the patch version.
+- Step 5 (status: pending) - Verify Reframe and Book Library resolve the exact upstream revision and focused consumer tests pass.
 
 Validation:
 - `swift test`

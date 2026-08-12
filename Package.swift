@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "FountainMaintenanceKit",
-    platforms: [.macOS(.v14), .iOS(.v17), .tvOS("17"), .watchOS("10")],
+    platforms: [.macOS(.v12)],
     products: [
         .library(name: "FountainMaintenanceCore", targets: ["FountainMaintenanceCore"]),
         .library(name: "FountainMaintenanceClient", targets: ["FountainMaintenanceClient"]),

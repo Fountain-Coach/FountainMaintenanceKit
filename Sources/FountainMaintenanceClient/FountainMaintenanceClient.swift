@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import FountainMaintenanceCore
 
 public enum MaintenanceClientError: Error, Equatable, Sendable {
