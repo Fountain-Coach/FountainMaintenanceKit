@@ -138,6 +138,185 @@ public struct MaintenanceMigrationManifest: Codable, Equatable, Sendable, Identi
     }
 }
 
+// MARK: - Chapter 117 recovery projection
+
+/// A Store record included in a recovery projection. The payload is already a
+/// typed, policy-approved JSON projection; raw Store files are never part of
+/// this contract.
+public struct RecoveryProjectionDocument: Codable, Equatable, Sendable, Identifiable {
+    public let id: String
+    public let kind: String
+    public let contentDigest: String
+    public let payload: Data
+
+    public init(id: String, kind: String, contentDigest: String, payload: Data) throws {
+        guard !id.isEmpty, !kind.isEmpty, !contentDigest.isEmpty, !payload.isEmpty else {
+            throw RecoveryProjectionError.invalidDocument
+        }
+        self.id = id
+        self.kind = kind
+        self.contentDigest = contentDigest
+        self.payload = payload
+    }
+}
+
+/// A content-addressed attachment reference. Payloads may be omitted by
+/// policy, but the reference and omission reason remain recoverable.
+public struct RecoveryProjectionAsset: Codable, Equatable, Sendable, Identifiable {
+    public let id: String
+    public let mediaType: String
+    public let contentDigest: String
+    public let byteLength: Int64
+    public let includedPayload: Data?
+    public let omissionReason: String?
+
+    public init(id: String, mediaType: String, contentDigest: String, byteLength: Int64,
+                includedPayload: Data? = nil, omissionReason: String? = nil) throws {
+        guard !id.isEmpty, !mediaType.isEmpty, !contentDigest.isEmpty, byteLength >= 0 else {
+            throw RecoveryProjectionError.invalidAsset
+        }
+        guard includedPayload != nil || omissionReason != nil else {
+            throw RecoveryProjectionError.assetDispositionMissing
+        }
+        self.id = id
+        self.mediaType = mediaType
+        self.contentDigest = contentDigest
+        self.byteLength = byteLength
+        self.includedPayload = includedPayload
+        self.omissionReason = omissionReason
+    }
+}
+
+public struct RecoveryProjectionManifest: Codable, Equatable, Sendable, Identifiable {
+    public static let currentFormatVersion = "fountain-coach.recovery.v1"
+
+    public let id: String
+    public let formatVersion: String
+    public let sourceStoreIdentity: String
+    public let sourceStoreSchema: String
+    public let sourceStoreSequence: UInt64
+    public let exportedAt: Date
+    public let sourceRevision: String
+    public let documents: [RecoveryProjectionDocument]
+    public let assets: [RecoveryProjectionAsset]
+    public let kitVersions: [String: String]
+
+    public init(id: String, sourceStoreIdentity: String, sourceStoreSchema: String,
+                sourceStoreSequence: UInt64, exportedAt: Date = Date(), sourceRevision: String,
+                documents: [RecoveryProjectionDocument], assets: [RecoveryProjectionAsset],
+                kitVersions: [String: String]) throws {
+        guard !id.isEmpty, !sourceStoreIdentity.isEmpty, !sourceStoreSchema.isEmpty,
+              !sourceRevision.isEmpty, !documents.isEmpty, !kitVersions.isEmpty else {
+            throw RecoveryProjectionError.invalidManifest
+        }
+        self.id = id
+        self.formatVersion = Self.currentFormatVersion
+        self.sourceStoreIdentity = sourceStoreIdentity
+        self.sourceStoreSchema = sourceStoreSchema
+        self.sourceStoreSequence = sourceStoreSequence
+        self.exportedAt = exportedAt
+        self.sourceRevision = sourceRevision
+        self.documents = documents.sorted { $0.id < $1.id }
+        self.assets = assets.sorted { $0.id < $1.id }
+        self.kitVersions = kitVersions
+    }
+}
+
+public struct RecoveryProjection: Codable, Equatable, Sendable {
+    public let manifest: RecoveryProjectionManifest
+    public let projectionDigest: String
+
+    public init(manifest: RecoveryProjectionManifest, projectionDigest: String) throws {
+        guard !projectionDigest.isEmpty else { throw RecoveryProjectionError.invalidDigest }
+        self.manifest = manifest
+        self.projectionDigest = projectionDigest
+    }
+}
+
+public struct RecoveryProjectionReceipt: Codable, Equatable, Sendable, Identifiable {
+    public enum State: String, Codable, Sendable { case exported, committed, mirrored, restored, failed }
+
+    public let id: String
+    public let idempotencyKey: String
+    public let state: State
+    public let sourceStoreIdentity: String
+    public let projectionDigest: String
+    public let localRepository: String?
+    public let localCommit: String?
+    public let mirrorRepository: String?
+    public let mirrorCommit: String?
+    public let targetStoreIdentity: String?
+    public let verification: [String]
+    public let failure: String?
+
+    public init(id: String, idempotencyKey: String, state: State, sourceStoreIdentity: String,
+                projectionDigest: String, localRepository: String? = nil, localCommit: String? = nil,
+                mirrorRepository: String? = nil, mirrorCommit: String? = nil,
+                targetStoreIdentity: String? = nil, verification: [String] = [], failure: String? = nil) throws {
+        guard !id.isEmpty, !idempotencyKey.isEmpty, !sourceStoreIdentity.isEmpty,
+              !projectionDigest.isEmpty else { throw RecoveryProjectionError.invalidReceipt }
+        self.id = id
+        self.idempotencyKey = idempotencyKey
+        self.state = state
+        self.sourceStoreIdentity = sourceStoreIdentity
+        self.projectionDigest = projectionDigest
+        self.localRepository = localRepository
+        self.localCommit = localCommit
+        self.mirrorRepository = mirrorRepository
+        self.mirrorCommit = mirrorCommit
+        self.targetStoreIdentity = targetStoreIdentity
+        self.verification = verification
+        self.failure = failure
+    }
+}
+
+public enum RecoveryProjectionError: Error, Equatable, Sendable {
+    case invalidDocument
+    case invalidAsset
+    case assetDispositionMissing
+    case invalidManifest
+    case invalidDigest
+    case invalidReceipt
+    case secretMaterialDetected
+}
+
+/// Deterministic, secret-free projection boundary. Host adapters own Store
+/// reads, Git commits, mirrors, and restores; this type owns the format and
+/// completeness checks shared by every host.
+public enum RecoveryProjectionCodec {
+    public static func encode(_ manifest: RecoveryProjectionManifest) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(manifest)
+        guard !data.isEmpty else { throw RecoveryProjectionError.invalidManifest }
+        return data
+    }
+
+    public static func decode(_ data: Data) throws -> RecoveryProjectionManifest {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let manifest = try decoder.decode(RecoveryProjectionManifest.self, from: data)
+        guard manifest.formatVersion == RecoveryProjectionManifest.currentFormatVersion else {
+            throw RecoveryProjectionError.invalidManifest
+        }
+        return manifest
+    }
+
+    public static func validate(_ manifest: RecoveryProjectionManifest) throws {
+        guard !manifest.documents.isEmpty else { throw RecoveryProjectionError.invalidManifest }
+        guard manifest.documents.map(\.id).count == Set(manifest.documents.map(\.id)).count else {
+            throw RecoveryProjectionError.invalidManifest
+        }
+        guard manifest.assets.map(\.id).count == Set(manifest.assets.map(\.id)).count else {
+            throw RecoveryProjectionError.invalidManifest
+        }
+        for asset in manifest.assets where asset.includedPayload == nil && asset.omissionReason == nil {
+            throw RecoveryProjectionError.assetDispositionMissing
+        }
+    }
+}
+
 public enum MaintenanceValidationError: Error, Equatable, Sendable {
     case emptyField(String)
     case confirmationRequired

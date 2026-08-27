@@ -1,6 +1,34 @@
 import Foundation
 import XCTest
 @testable import FountainMaintenanceCore
+
+final class RecoveryProjectionTests: XCTestCase {
+    func testProjectionEncodingIsDeterministicAndSorted() throws {
+        let first = try RecoveryProjectionDocument(id: "scenario:2", kind: "scenario", contentDigest: "d2", payload: Data("two".utf8))
+        let second = try RecoveryProjectionDocument(id: "scenario:1", kind: "scenario", contentDigest: "d1", payload: Data("one".utf8))
+        let manifest = try RecoveryProjectionManifest(
+            id: "export-1", sourceStoreIdentity: "store-1", sourceStoreSchema: "0.4",
+            sourceStoreSequence: 12, exportedAt: Date(timeIntervalSince1970: 0), sourceRevision: "abc",
+            documents: [first, second], assets: [], kitVersions: ["FountainMaintenanceKit": "0.3.0"])
+
+        let encoded = try RecoveryProjectionCodec.encode(manifest)
+        let decoded = try RecoveryProjectionCodec.decode(encoded)
+        XCTAssertEqual(decoded.documents.map(\.id), ["scenario:1", "scenario:2"])
+        XCTAssertEqual(encoded, try RecoveryProjectionCodec.encode(decoded))
+    }
+
+    func testAssetMustDeclareIncludedOrReferencedDisposition() throws {
+        XCTAssertThrowsError(try RecoveryProjectionAsset(id: "asset-1", mediaType: "text/plain", contentDigest: "d", byteLength: 1)) { error in
+            XCTAssertEqual(error as? RecoveryProjectionError, .assetDispositionMissing)
+        }
+        XCTAssertNoThrow(try RecoveryProjectionAsset(id: "asset-1", mediaType: "text/plain", contentDigest: "d", byteLength: 1, omissionReason: "private source"))
+    }
+
+    func testReceiptRequiresIdentityAndDigest() throws {
+        XCTAssertThrowsError(try RecoveryProjectionReceipt(id: "", idempotencyKey: "k", state: .exported, sourceStoreIdentity: "store", projectionDigest: "digest"))
+        XCTAssertNoThrow(try RecoveryProjectionReceipt(id: "r", idempotencyKey: "k", state: .exported, sourceStoreIdentity: "store", projectionDigest: "digest"))
+    }
+}
 import FountainMaintenanceTestKit
 import FountainMaintenanceClient
 

@@ -8,16 +8,17 @@ manifests, migration manifests, and opaque SecretStore references. It never carr
 
 ## Products
 
-- `FountainMaintenanceCore` — dependency-free domain contract and admission ledger.
+- `FountainMaintenanceCore` — dependency-free domain contract, admission ledger, and Chapter 117 recovery projection
+  format for typed Store documents, content-addressed assets, deterministic manifests, and sanitized receipts.
 - `FountainMaintenanceClient` — typed URL transport boundary; authentication is supplied by a host adapter.
 - `FountainMaintenanceTestKit` — deterministic offline transport and request/release fixtures.
 
 ## Support boundary
 
-The first declared profiles are macOS 14 and Linux with Swift 6.1-compatible Foundation facilities. This release only
-proves the dependency-free core and typed URL client on those profiles; Linux SecretStore, supervisor, Git, build, and
-migration evidence remain host-adapter work. “Portable Swift” means the declared profile matrix; it does not promise
-that every Swift runtime supplies every host facility.
+The first declared profiles are macOS 14 and Linux with Swift 6.1-compatible Foundation facilities. The recovery
+projection format is portable and deterministic; Store reads, native Git commits, mirrors, restore execution, and
+host credentials remain explicit host-adapter work. “Portable Swift” means the declared profile matrix; it does not
+promise that every Swift runtime supplies every host facility.
 
 ## Usage
 
