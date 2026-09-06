@@ -2,6 +2,8 @@
 
 Portable Swift contract and typed client for Fountain-Coach maintenance control planes.
 
+Current release: `v0.5.0`.
+
 This package is the shared seam between Reframe, local maintenance skills, and a hosted Book Library maintenance
 service. It carries operation identity, authorization state, idempotency, sanitized terminal receipts, release
 manifests, migration manifests, and opaque SecretStore references. It never carries credential values.
@@ -34,6 +36,9 @@ Approval clients receive only a broker-issued `MaintenanceApprovalPublicChalleng
 submit the typed `MaintenanceApprovalSubmission` to the challenge origin. The package accepts HTTPS origins (or
 loopback HTTP for fixtures) and never places challenge internals, private keys, or SecretStore values in the public
 projection.
+
+Trusted-device registration is owner-authorized: an enrollment request is accepted only with a one-time signature from
+an already configured owner key. The approval origin does not provide anonymous device registration.
 
 ## Governance
 

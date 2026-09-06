@@ -93,20 +93,105 @@ public struct MaintenanceSignedApproval: Codable, Equatable, Sendable {
     }
 }
 
+public struct MaintenanceDeviceEnrollmentRequest: Codable, Equatable, Sendable {
+    public let deviceKeyID: String
+    public let publicKey: Data
+    public let nonce: String
+    public let expiresAt: Date
+
+    public init(deviceKeyID: String, publicKey: Data, nonce: String, expiresAt: Date) throws {
+        guard !deviceKeyID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !publicKey.isEmpty, !nonce.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              (try? Curve25519.Signing.PublicKey(rawRepresentation: publicKey)) != nil else {
+            throw MaintenanceApprovalVerificationError.invalidEnrollment
+        }
+        self.deviceKeyID = deviceKeyID; self.publicKey = publicKey; self.nonce = nonce; self.expiresAt = expiresAt
+    }
+
+    public var bindingDigest: String {
+        MaintenanceApprovalAuthority.digest([
+            deviceKeyID, publicKey.base64EncodedString(), nonce, String(expiresAt.timeIntervalSince1970)
+        ])
+    }
+}
+
+public struct MaintenanceDeviceEnrollmentAuthorization: Codable, Equatable, Sendable {
+    public let enrollmentBindingDigest: String
+    public let approverKeyID: String
+    public let approvedAt: Date
+    public let expiresAt: Date
+    public let signature: Data
+
+    public init(request: MaintenanceDeviceEnrollmentRequest, approverKeyID: String,
+                approvedAt: Date, expiresAt: Date, signature: Data) throws {
+        guard !approverKeyID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !signature.isEmpty else {
+            throw MaintenanceApprovalVerificationError.invalidEnrollment
+        }
+        enrollmentBindingDigest = request.bindingDigest; self.approverKeyID = approverKeyID
+        self.approvedAt = approvedAt; self.expiresAt = expiresAt; self.signature = signature
+    }
+
+    fileprivate var signingMaterial: String {
+        [enrollmentBindingDigest, approverKeyID, String(approvedAt.timeIntervalSince1970),
+         String(expiresAt.timeIntervalSince1970)].joined(separator: "\u{1F}")
+    }
+}
+
+public actor MaintenanceEnrollmentAuthority {
+    private let publicKeys: [String: Data]
+    private var consumed: Set<String> = []
+
+    public init(approverPublicKeys: [String: Data]) throws {
+        guard !approverPublicKeys.isEmpty else { throw MaintenanceApprovalVerificationError.invalidEnrollment }
+        for key in approverPublicKeys.values {
+            guard (try? Curve25519.Signing.PublicKey(rawRepresentation: key)) != nil else {
+                throw MaintenanceApprovalVerificationError.invalidDevice
+            }
+        }
+        self.publicKeys = approverPublicKeys
+    }
+
+    fileprivate func verifyAndConsume(_ request: MaintenanceDeviceEnrollmentRequest,
+                                      authorization: MaintenanceDeviceEnrollmentAuthorization,
+                                      now: Date) throws {
+        guard request.expiresAt > now, authorization.expiresAt > now,
+              authorization.expiresAt <= request.expiresAt, authorization.approvedAt <= now else {
+            throw MaintenanceApprovalVerificationError.enrollmentExpired
+        }
+        guard authorization.enrollmentBindingDigest == request.bindingDigest else {
+            throw MaintenanceApprovalVerificationError.bindingMismatch
+        }
+        guard let publicKeyData = publicKeys[authorization.approverKeyID] else {
+            throw MaintenanceApprovalVerificationError.unknownEnrollmentAuthority
+        }
+        guard let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKeyData),
+              publicKey.isValidSignature(authorization.signature, for: Data(authorization.signingMaterial.utf8)) else {
+            throw MaintenanceApprovalVerificationError.enrollmentSignatureInvalid
+        }
+        guard consumed.insert(request.bindingDigest).inserted else {
+            throw MaintenanceApprovalVerificationError.enrollmentReplayed
+        }
+    }
+}
+
 public actor MaintenanceTrustedDeviceRegistry {
     private var publicKeys: [String: Data] = [:]
     private var revoked: Set<String> = []
+    private let enrollmentAuthority: MaintenanceEnrollmentAuthority
 
-    public init() {}
-
-    public func register(deviceKeyID: String, publicKey: Data) throws {
-        guard !deviceKeyID.isEmpty, !publicKey.isEmpty,
-              (try? Curve25519.Signing.PublicKey(rawRepresentation: publicKey)) != nil else {
-            throw MaintenanceApprovalVerificationError.invalidDevice
-        }
-        publicKeys[deviceKeyID] = publicKey
-        revoked.remove(deviceKeyID)
+    public init(enrollmentAuthority: MaintenanceEnrollmentAuthority) {
+        self.enrollmentAuthority = enrollmentAuthority
     }
+
+    public func register(request: MaintenanceDeviceEnrollmentRequest,
+                         authorization: MaintenanceDeviceEnrollmentAuthorization,
+                         now: Date = Date()) async throws {
+        try await enrollmentAuthority.verifyAndConsume(request, authorization: authorization, now: now)
+        publicKeys[request.deviceKeyID] = request.publicKey
+        revoked.remove(request.deviceKeyID)
+    }
+
+    public func registeredDeviceIDs() -> [String] { publicKeys.keys.sorted() }
 
     public func revoke(deviceKeyID: String) { revoked.insert(deviceKeyID) }
 
@@ -117,9 +202,35 @@ public actor MaintenanceTrustedDeviceRegistry {
     }
 }
 
+public struct MaintenanceEnrollmentSigner: Sendable {
+    private let privateKeyData: Data
+
+    public init(privateKeyData: Data) throws {
+        guard (try? Curve25519.Signing.PrivateKey(rawRepresentation: privateKeyData)) != nil else {
+            throw MaintenanceApprovalVerificationError.invalidDevice
+        }
+        self.privateKeyData = privateKeyData
+    }
+
+    public var publicKey: Data {
+        (try? Curve25519.Signing.PrivateKey(rawRepresentation: privateKeyData).publicKey.rawRepresentation) ?? Data()
+    }
+
+    public func authorize(request: MaintenanceDeviceEnrollmentRequest, approverKeyID: String,
+                          approvedAt: Date, expiresAt: Date) throws -> MaintenanceDeviceEnrollmentAuthorization {
+        let material = [request.bindingDigest, approverKeyID, String(approvedAt.timeIntervalSince1970),
+                        String(expiresAt.timeIntervalSince1970)].joined(separator: "\u{1F}")
+        let key = try Curve25519.Signing.PrivateKey(rawRepresentation: privateKeyData)
+        return try MaintenanceDeviceEnrollmentAuthorization(
+            request: request, approverKeyID: approverKeyID, approvedAt: approvedAt, expiresAt: expiresAt,
+            signature: try key.signature(for: Data(material.utf8)))
+    }
+}
+
 public enum MaintenanceApprovalVerificationError: Error, Equatable, Sendable {
     case invalidChallenge, invalidApproval, invalidDevice, unknownDevice, revokedDevice
     case bindingMismatch, invalidSignature, expired, denied, replayed
+    case invalidEnrollment, unknownEnrollmentAuthority, enrollmentSignatureInvalid, enrollmentExpired, enrollmentReplayed
 }
 
 public actor MaintenanceApprovalAuthority {
@@ -344,6 +455,11 @@ public actor MaintenanceApprovalBroker {
         case .revokedDevice: return (.rejected, "revoked-device", false)
         case .bindingMismatch: return (.rejected, "binding-mismatch", false)
         case .invalidSignature: return (.rejected, "invalid-signature", false)
+        case .invalidEnrollment: return (.rejected, "invalid-enrollment", false)
+        case .unknownEnrollmentAuthority: return (.rejected, "unknown-enrollment-authority", false)
+        case .enrollmentSignatureInvalid: return (.rejected, "enrollment-signature-invalid", false)
+        case .enrollmentExpired: return (.expired, "enrollment-expired", true)
+        case .enrollmentReplayed: return (.replayed, "enrollment-replayed", true)
         }
     }
 }

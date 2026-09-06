@@ -33,6 +33,20 @@ import FountainMaintenanceTestKit
 import FountainMaintenanceClient
 
 final class FountainMaintenanceCoreTests: XCTestCase {
+    private func enrolledRegistry(devicePublicKey: Data) async throws -> MaintenanceTrustedDeviceRegistry {
+        let ownerSigner = try MaintenanceEnrollmentSigner(privateKeyData: Data(repeating: 9, count: 32))
+        let enrollmentAuthority = try MaintenanceEnrollmentAuthority(approverPublicKeys: ["owner-1": ownerSigner.publicKey])
+        let registry = MaintenanceTrustedDeviceRegistry(enrollmentAuthority: enrollmentAuthority)
+        let now = Date(timeIntervalSince1970: 1_000)
+        let request = try MaintenanceDeviceEnrollmentRequest(
+            deviceKeyID: "phone-1", publicKey: devicePublicKey, nonce: "enrollment-nonce",
+            expiresAt: now.addingTimeInterval(300))
+        let authorization = try ownerSigner.authorize(
+            request: request, approverKeyID: "owner-1", approvedAt: now, expiresAt: now.addingTimeInterval(120))
+        try await registry.register(request: request, authorization: authorization, now: now)
+        return registry
+    }
+
     private struct RecordingSecretProvider: MaintenanceSecretProvider {
         let secret: Data
         func withSecret<T: Sendable>(reference: MaintenanceSecretReference,
@@ -127,8 +141,7 @@ final class FountainMaintenanceCoreTests: XCTestCase {
             expiresAt: now.addingTimeInterval(300), correlationID: "corr-1",
             approvalOrigin: "https://approve.example.test")
         let signer = try MaintenanceTrustedDeviceSigner(privateKeyData: Data(repeating: 7, count: 32))
-        let registry = MaintenanceTrustedDeviceRegistry()
-        try await registry.register(deviceKeyID: "phone-1", publicKey: signer.publicKey)
+        let registry = try await enrolledRegistry(devicePublicKey: signer.publicKey)
         let broker = MaintenanceApprovalBroker(registry: registry)
         let publicChallenge = try await broker.issue(challenge: challenge, now: now)
 
@@ -148,13 +161,72 @@ final class FountainMaintenanceCoreTests: XCTestCase {
         XCTAssertNil(replay.lease)
     }
 
+    func testEnrollmentRequiresOwnerAuthorizationAndCannotBeReplayed() async throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let device = try MaintenanceTrustedDeviceSigner(privateKeyData: Data(repeating: 7, count: 32))
+        let owner = try MaintenanceEnrollmentSigner(privateKeyData: Data(repeating: 9, count: 32))
+        let impostor = try MaintenanceEnrollmentSigner(privateKeyData: Data(repeating: 10, count: 32))
+        let authority = try MaintenanceEnrollmentAuthority(approverPublicKeys: ["owner-1": owner.publicKey])
+        let registry = MaintenanceTrustedDeviceRegistry(enrollmentAuthority: authority)
+        let request = try MaintenanceDeviceEnrollmentRequest(
+            deviceKeyID: "phone-1", publicKey: device.publicKey, nonce: "nonce", expiresAt: now.addingTimeInterval(300))
+        let forged = try impostor.authorize(request: request, approverKeyID: "owner-1",
+                                            approvedAt: now, expiresAt: now.addingTimeInterval(120))
+        do {
+            try await registry.register(request: request, authorization: forged, now: now)
+            XCTFail("an untrusted signer must not enroll a device")
+        } catch let error as MaintenanceApprovalVerificationError {
+            XCTAssertEqual(error, .enrollmentSignatureInvalid)
+        }
+        let unknownAuthority = try owner.authorize(request: request, approverKeyID: "not-configured",
+                                                   approvedAt: now, expiresAt: now.addingTimeInterval(120))
+        do {
+            try await registry.register(request: request, authorization: unknownAuthority, now: now)
+            XCTFail("an unknown owner key must not enroll a device")
+        } catch let error as MaintenanceApprovalVerificationError {
+            XCTAssertEqual(error, .unknownEnrollmentAuthority)
+        }
+        let expired = try owner.authorize(request: request, approverKeyID: "owner-1",
+                                          approvedAt: now, expiresAt: now.addingTimeInterval(10))
+        do {
+            try await registry.register(request: request, authorization: expired, now: now.addingTimeInterval(11))
+            XCTFail("an expired enrollment must not enroll a device")
+        } catch let error as MaintenanceApprovalVerificationError {
+            XCTAssertEqual(error, .enrollmentExpired)
+        }
+        let otherRequest = try MaintenanceDeviceEnrollmentRequest(
+            deviceKeyID: "phone-1", publicKey: device.publicKey, nonce: "different-nonce",
+            expiresAt: now.addingTimeInterval(300))
+        let mismatched = try owner.authorize(request: request, approverKeyID: "owner-1",
+                                             approvedAt: now, expiresAt: now.addingTimeInterval(120))
+        do {
+            try await registry.register(request: otherRequest, authorization: mismatched, now: now)
+            XCTFail("an enrollment bound to another request must be refused")
+        } catch let error as MaintenanceApprovalVerificationError {
+            XCTAssertEqual(error, .bindingMismatch)
+        }
+        let authorization = try owner.authorize(request: request, approverKeyID: "owner-1",
+                                                approvedAt: now, expiresAt: now.addingTimeInterval(120))
+        try await registry.register(request: request, authorization: authorization, now: now)
+        let registeredIDs = await registry.registeredDeviceIDs()
+        XCTAssertEqual(registeredIDs, ["phone-1"])
+        do {
+            try await registry.register(request: request, authorization: authorization, now: now)
+            XCTFail("an enrollment authorization must be one-time")
+        } catch let error as MaintenanceApprovalVerificationError {
+            XCTAssertEqual(error, .enrollmentReplayed)
+        }
+    }
+
     func testApprovalClientUsesTheChallengeOriginAndRejectsUnsafeOrigins() async throws {
         let challenge = try MaintenanceApprovalChallenge(
             challengeID: "safe-id_1", operation: "health.verify", target: "book-library",
             scope: "health:read", secretReference: "service/account/label", nonce: "nonce-2",
             expiresAt: Date(timeIntervalSince1970: 2_000), correlationID: "corr-2",
             approvalOrigin: "https://approve.example.test")
-        let broker = MaintenanceApprovalBroker(registry: MaintenanceTrustedDeviceRegistry())
+        let ownerSigner = try MaintenanceEnrollmentSigner(privateKeyData: Data(repeating: 9, count: 32))
+        let enrollmentAuthority = try MaintenanceEnrollmentAuthority(approverPublicKeys: ["owner-1": ownerSigner.publicKey])
+        let broker = MaintenanceApprovalBroker(registry: MaintenanceTrustedDeviceRegistry(enrollmentAuthority: enrollmentAuthority))
         let publicChallenge = try await broker.issue(challenge: challenge, now: Date(timeIntervalSince1970: 1_000))
         XCTAssertEqual(
             try MaintenanceApprovalClient.endpoint(for: publicChallenge).absoluteString,

@@ -1,4 +1,21 @@
-## Current bounded change — portable approval contract promotion (2026-09-06)
+## Current bounded change — owner-authorized device enrollment (2026-09-06)
+
+Capability: prevent anonymous trusted-device registration. A device public key may enter the registry only with a
+one-time, expiry-bound enrollment authorization signed by an already trusted owner key. The public approval host has
+no self-registration route.
+
+Proof gate: forged owner signatures, unknown enrollment authorities, expired authorizations, binding mismatches, and
+replayed enrollment authorizations fail; a valid owner authorization registers exactly one device; the package tests
+pass and no private key or credential value is persisted.
+
+Implementation result: add typed enrollment requests/authorizations, an owner-key trust root, replay protection, and a
+deterministic signer fixture. Existing approval verification now consumes only devices admitted through this gate.
+The complete published-package suite passes 13 tests, including forged, unknown-authority, expired, mismatched, and
+replayed enrollment refusals.
+
+Deferred: platform enrollment UI, device attestation/passkeys, dedicated approval host, DNS/TLS, and deployment.
+
+## Previous bounded change — portable approval contract promotion (2026-09-06)
 
 Capability: promote the server-owned approval challenge, trusted-device signature verification, redacted broker
 receipt, and HTTPS/loopback client transport into the published `FountainMaintenanceKit` consumed by Linux hosts.
