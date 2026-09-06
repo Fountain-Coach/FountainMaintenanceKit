@@ -369,6 +369,10 @@ public actor MaintenanceApprovalServerAdapter {
         try await broker.issue(challenge: challenge, now: now)
     }
 
+    public func publicChallenge(challengeID: String) async throws -> MaintenanceApprovalPublicChallenge {
+        try await broker.publicChallenge(challengeID: challengeID)
+    }
+
     public func submit(_ submission: MaintenanceApprovalSubmission, now: Date = Date()) async throws -> MaintenanceApprovalSessionReceipt {
         try await broker.approve(challengeID: submission.challengeID, approval: submission.approval, now: now).receipt
     }
