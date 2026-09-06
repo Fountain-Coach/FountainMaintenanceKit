@@ -2,6 +2,14 @@ import Foundation
 import XCTest
 @testable import FountainMaintenanceCore
 
+private actor SharedEnrollmentReplayStore: MaintenanceEnrollmentReplayStore {
+    private var consumed: Set<String> = []
+
+    func consume(_ bindingDigest: String) async throws -> Bool {
+        consumed.insert(bindingDigest).inserted
+    }
+}
+
 final class RecoveryProjectionTests: XCTestCase {
     func testProjectionEncodingIsDeterministicAndSorted() throws {
         let first = try RecoveryProjectionDocument(id: "scenario:2", kind: "scenario", contentDigest: "d2", payload: Data("two".utf8))
@@ -213,6 +221,21 @@ final class FountainMaintenanceCoreTests: XCTestCase {
         do {
             try await registry.register(request: request, authorization: authorization, now: now)
             XCTFail("an enrollment authorization must be one-time")
+        } catch let error as MaintenanceApprovalVerificationError {
+            XCTAssertEqual(error, .enrollmentReplayed)
+        }
+
+        let sharedStore = SharedEnrollmentReplayStore()
+        let sharedAuthority = try MaintenanceEnrollmentAuthority(
+            approverPublicKeys: ["owner-1": owner.publicKey], replayStore: sharedStore)
+        let firstRegistry = MaintenanceTrustedDeviceRegistry(enrollmentAuthority: sharedAuthority)
+        try await firstRegistry.register(request: request, authorization: authorization, now: now)
+        let secondAuthority = try MaintenanceEnrollmentAuthority(
+            approverPublicKeys: ["owner-1": owner.publicKey], replayStore: sharedStore)
+        let secondRegistry = MaintenanceTrustedDeviceRegistry(enrollmentAuthority: secondAuthority)
+        do {
+            try await secondRegistry.register(request: request, authorization: authorization, now: now)
+            XCTFail("a durable replay store must refuse reuse across authority instances")
         } catch let error as MaintenanceApprovalVerificationError {
             XCTAssertEqual(error, .enrollmentReplayed)
         }

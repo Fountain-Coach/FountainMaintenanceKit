@@ -2,7 +2,7 @@
 
 Portable Swift contract and typed client for Fountain-Coach maintenance control planes.
 
-Current release: `v0.5.0`.
+Current release: `v0.6.0`.
 
 This package is the shared seam between Reframe, local maintenance skills, and a hosted Book Library maintenance
 service. It carries operation identity, authorization state, idempotency, sanitized terminal receipts, release
@@ -38,7 +38,9 @@ loopback HTTP for fixtures) and never places challenge internals, private keys, 
 projection.
 
 Trusted-device registration is owner-authorized: an enrollment request is accepted only with a one-time signature from
-an already configured owner key. The approval origin does not provide anonymous device registration.
+an already configured owner key. The approval origin does not provide anonymous device registration. The authority
+accepts an injected atomic replay store so a host can persist consumed enrollment bindings across process restarts;
+the default in-memory store is only a deterministic fixture.
 
 ## Governance
 

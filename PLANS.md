@@ -1,4 +1,16 @@
-## Current bounded change — owner-authorized device enrollment (2026-09-06)
+## Current bounded change — durable enrollment replay boundary (2026-09-06)
+
+Capability: let the approval-host adapter make one-time enrollment durable across authority instances without moving
+FountainStore or filesystem policy into the reusable kit.
+
+Proof gate: an injected atomic replay store admits a binding once, rejects the same binding through a second authority
+instance, and the complete package suite passes. The default in-memory store remains explicitly fixture-only.
+
+Implementation result: add `MaintenanceEnrollmentReplayStore` and its deterministic in-memory implementation; the
+published package is released as `v0.6.0`. No concrete FountainStore persistence adapter, approval host, DNS, TLS, or
+deployment claim is made by this phase.
+
+## Previous bounded change — owner-authorized device enrollment (2026-09-06)
 
 Capability: prevent anonymous trusted-device registration. A device public key may enter the registry only with a
 one-time, expiry-bound enrollment authorization signed by an already trusted owner key. The public approval host has

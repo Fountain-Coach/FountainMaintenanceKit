@@ -137,11 +137,33 @@ public struct MaintenanceDeviceEnrollmentAuthorization: Codable, Equatable, Send
     }
 }
 
-public actor MaintenanceEnrollmentAuthority {
-    private let publicKeys: [String: Data]
+public protocol MaintenanceEnrollmentReplayStore: Sendable {
+    /// Atomically consume a binding digest. `true` admits it; `false` means it
+    /// was already consumed by this durable store.
+    func consume(_ bindingDigest: String) async throws -> Bool
+}
+
+public actor InMemoryMaintenanceEnrollmentReplayStore: MaintenanceEnrollmentReplayStore {
     private var consumed: Set<String> = []
 
+    public init() {}
+
+    public func consume(_ bindingDigest: String) async throws -> Bool {
+        consumed.insert(bindingDigest).inserted
+    }
+}
+
+public actor MaintenanceEnrollmentAuthority {
+    private let publicKeys: [String: Data]
+    private let replayStore: any MaintenanceEnrollmentReplayStore
+
     public init(approverPublicKeys: [String: Data]) throws {
+        try self.init(approverPublicKeys: approverPublicKeys,
+                      replayStore: InMemoryMaintenanceEnrollmentReplayStore())
+    }
+
+    public init(approverPublicKeys: [String: Data],
+                replayStore: any MaintenanceEnrollmentReplayStore) throws {
         guard !approverPublicKeys.isEmpty else { throw MaintenanceApprovalVerificationError.invalidEnrollment }
         for key in approverPublicKeys.values {
             guard (try? Curve25519.Signing.PublicKey(rawRepresentation: key)) != nil else {
@@ -149,11 +171,12 @@ public actor MaintenanceEnrollmentAuthority {
             }
         }
         self.publicKeys = approverPublicKeys
+        self.replayStore = replayStore
     }
 
     fileprivate func verifyAndConsume(_ request: MaintenanceDeviceEnrollmentRequest,
                                       authorization: MaintenanceDeviceEnrollmentAuthorization,
-                                      now: Date) throws {
+                                      now: Date) async throws {
         guard request.expiresAt > now, authorization.expiresAt > now,
               authorization.expiresAt <= request.expiresAt, authorization.approvedAt <= now else {
             throw MaintenanceApprovalVerificationError.enrollmentExpired
@@ -168,7 +191,7 @@ public actor MaintenanceEnrollmentAuthority {
               publicKey.isValidSignature(authorization.signature, for: Data(authorization.signingMaterial.utf8)) else {
             throw MaintenanceApprovalVerificationError.enrollmentSignatureInvalid
         }
-        guard consumed.insert(request.bindingDigest).inserted else {
+        guard try await replayStore.consume(request.bindingDigest) else {
             throw MaintenanceApprovalVerificationError.enrollmentReplayed
         }
     }
