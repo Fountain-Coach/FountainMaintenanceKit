@@ -1,3 +1,22 @@
+## Current bounded change — portable approval contract promotion (2026-09-06)
+
+Capability: promote the server-owned approval challenge, trusted-device signature verification, redacted broker
+receipt, and HTTPS/loopback client transport into the published `FountainMaintenanceKit` consumed by Linux hosts.
+
+Chapters read: Reframe 07, 08, 63, and 131. The published package is the reusable contract; host listeners,
+SecretStore custody, browser/mobile UI, DNS, TLS provisioning, Reframe, and deployment remain outside this slice.
+
+Proof gate: `swift test` passes for the package; challenge projections contain no private request fields; invalid,
+expired, replayed, and mismatched approvals fail or become terminal according to the typed broker state; client
+routes only to HTTPS or loopback HTTP and sends only the signed submission envelope; `git diff --check` passes.
+
+Implementation result: add the approval contract to `FountainMaintenanceCore`, the native URLSession transport to
+`FountainMaintenanceClient`, and deterministic fixtures/tests. No hosted endpoint or DNS claim is made by this
+phase.
+
+Deferred: update Book Library to a released package revision, expose the native `/approve/<challengeID>` route,
+configure the real SecretStore/host adapter, and perform the separate remote HTTPS/DNS acceptance.
+
 Title: FountainMaintenanceKit v0.1 — portable maintenance contract
 
 Goal: Publish the reusable FCIS-governed Swift core and typed client so Reframe and maintenance services consume one

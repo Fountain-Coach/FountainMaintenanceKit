@@ -8,8 +8,8 @@ manifests, migration manifests, and opaque SecretStore references. It never carr
 
 ## Products
 
-- `FountainMaintenanceCore` — dependency-free domain contract, admission ledger, and Chapter 117 recovery projection
-  format for typed Store documents, content-addressed assets, deterministic manifests, and sanitized receipts.
+- `FountainMaintenanceCore` — domain contract, admission ledger, approval challenge/broker, and Chapter 117 recovery
+  projection format for typed Store documents, content-addressed assets, deterministic manifests, and sanitized receipts.
 - `FountainMaintenanceClient` — typed URL transport boundary; authentication is supplied by a host adapter.
 - `FountainMaintenanceTestKit` — deterministic offline transport and request/release fixtures.
 
@@ -29,6 +29,11 @@ let receipt = try await client.submit(operation)
 
 The caller provides an operation with an opaque `MaintenanceSecretReference`. The transport/host adapter resolves or
 rejects that reference according to platform policy; the package never receives or stores a secret value.
+
+Approval clients receive only a broker-issued `MaintenanceApprovalPublicChallenge`, sign it on a trusted device, and
+submit the typed `MaintenanceApprovalSubmission` to the challenge origin. The package accepts HTTPS origins (or
+loopback HTTP for fixtures) and never places challenge internals, private keys, or SecretStore values in the public
+projection.
 
 ## Governance
 

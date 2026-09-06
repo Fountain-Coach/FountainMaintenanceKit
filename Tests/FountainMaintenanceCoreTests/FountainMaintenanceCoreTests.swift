@@ -118,4 +118,56 @@ final class FountainMaintenanceCoreTests: XCTestCase {
         XCTAssertEqual(decoded, manifest)
         XCTAssertFalse(String(decoding: try JSONEncoder().encode(manifest), as: UTF8.self).contains("fixture-secret-value"))
     }
+
+    func testApprovalBrokerExposesOnlyOpaqueProjectionAndConsumesOnce() async throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let challenge = try MaintenanceApprovalChallenge(
+            challengeID: "challenge-1", operation: "release.deploy", target: "book-library",
+            scope: "library:write", secretReference: "service/account/label", nonce: "nonce-1",
+            expiresAt: now.addingTimeInterval(300), correlationID: "corr-1",
+            approvalOrigin: "https://approve.example.test")
+        let signer = try MaintenanceTrustedDeviceSigner(privateKeyData: Data(repeating: 7, count: 32))
+        let registry = MaintenanceTrustedDeviceRegistry()
+        try await registry.register(deviceKeyID: "phone-1", publicKey: signer.publicKey)
+        let broker = MaintenanceApprovalBroker(registry: registry)
+        let publicChallenge = try await broker.issue(challenge: challenge, now: now)
+
+        let publicJSON = String(decoding: try JSONEncoder().encode(publicChallenge), as: UTF8.self)
+        XCTAssertTrue(publicJSON.contains("challenge-1"))
+        XCTAssertFalse(publicJSON.contains("service/account/label"))
+        XCTAssertFalse(publicJSON.contains("nonce-1"))
+        XCTAssertEqual(publicChallenge.qrPayload, "https://approve.example.test/approve/challenge-1")
+
+        let approval = try signer.sign(challenge: challenge, decision: .approved, deviceKeyID: "phone-1",
+                                       approvedAt: now, expiresAt: now.addingTimeInterval(120))
+        let outcome = try await broker.approve(challengeID: "challenge-1", approval: approval, now: now)
+        XCTAssertEqual(outcome.receipt.state, .approved)
+        XCTAssertNotNil(outcome.lease)
+        let replay = try await broker.approve(challengeID: "challenge-1", approval: approval, now: now)
+        XCTAssertEqual(replay.receipt.state, .replayed)
+        XCTAssertNil(replay.lease)
+    }
+
+    func testApprovalClientUsesTheChallengeOriginAndRejectsUnsafeOrigins() async throws {
+        let challenge = try MaintenanceApprovalChallenge(
+            challengeID: "safe-id_1", operation: "health.verify", target: "book-library",
+            scope: "health:read", secretReference: "service/account/label", nonce: "nonce-2",
+            expiresAt: Date(timeIntervalSince1970: 2_000), correlationID: "corr-2",
+            approvalOrigin: "https://approve.example.test")
+        let broker = MaintenanceApprovalBroker(registry: MaintenanceTrustedDeviceRegistry())
+        let publicChallenge = try await broker.issue(challenge: challenge, now: Date(timeIntervalSince1970: 1_000))
+        XCTAssertEqual(
+            try MaintenanceApprovalClient.endpoint(for: publicChallenge).absoluteString,
+            "https://approve.example.test/approve/safe-id_1")
+
+        let unsafe = try MaintenanceApprovalChallenge(
+            challengeID: "../escape", operation: "health.verify", target: "book-library",
+            scope: "health:read", secretReference: "service/account/label", nonce: "nonce-3",
+            expiresAt: Date(timeIntervalSince1970: 2_000), correlationID: "corr-3",
+            approvalOrigin: "https://approve.example.test")
+        let unsafeProjection = try await broker.issue(challenge: unsafe, now: Date(timeIntervalSince1970: 1_000))
+        XCTAssertThrowsError(try MaintenanceApprovalClient.endpoint(for: unsafeProjection)) { error in
+            XCTAssertEqual(error as? MaintenanceApprovalClientTransportError, .invalidChallengeID)
+        }
+    }
 }
