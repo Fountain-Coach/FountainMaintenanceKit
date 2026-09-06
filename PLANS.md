@@ -10,9 +10,9 @@ Proof gate: `swift test` passes for the package; challenge projections contain n
 expired, replayed, and mismatched approvals fail or become terminal according to the typed broker state; client
 routes only to HTTPS or loopback HTTP and sends only the signed submission envelope; `git diff --check` passes.
 
-Implementation result: add the approval contract to `FountainMaintenanceCore`, the native URLSession transport to
-`FountainMaintenanceClient`, and deterministic fixtures/tests. No hosted endpoint or DNS claim is made by this
-phase.
+Implementation result: add the approval contract to `FountainMaintenanceCore`, including a non-sensitive binding
+digest in the public projection so a trusted device can sign without the private challenge, plus the native
+URLSession transport and deterministic fixtures/tests. No hosted endpoint or DNS claim is made by this phase.
 
 Deferred: update Book Library to a released package revision, expose the native `/approve/<challengeID>` route,
 configure the real SecretStore/host adapter, and perform the separate remote HTTPS/DNS acceptance.

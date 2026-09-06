@@ -63,10 +63,22 @@ public struct MaintenanceSignedApproval: Codable, Equatable, Sendable {
         challenge: MaintenanceApprovalChallenge, decision: MaintenanceApprovalDecision,
         deviceKeyID: String, approvedAt: Date, expiresAt: Date, signature: Data
     ) throws {
+        try self.init(challengeBindingDigest: challenge.bindingDigest, decision: decision,
+                      deviceKeyID: deviceKeyID, approvedAt: approvedAt, expiresAt: expiresAt,
+                      signature: signature)
+    }
+
+    public init(
+        challengeBindingDigest: String, decision: MaintenanceApprovalDecision,
+        deviceKeyID: String, approvedAt: Date, expiresAt: Date, signature: Data
+    ) throws {
+        guard !challengeBindingDigest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw MaintenanceApprovalVerificationError.invalidApproval
+        }
         guard !deviceKeyID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !signature.isEmpty else {
             throw MaintenanceApprovalVerificationError.invalidApproval
         }
-        self.challengeBindingDigest = challenge.bindingDigest
+        self.challengeBindingDigest = challengeBindingDigest
         self.decision = decision
         self.deviceKeyID = deviceKeyID
         self.approvedAt = approvedAt
@@ -163,12 +175,28 @@ public struct MaintenanceTrustedDeviceSigner: Sendable {
         challenge: MaintenanceApprovalChallenge, decision: MaintenanceApprovalDecision,
         deviceKeyID: String, approvedAt: Date, expiresAt: Date
     ) throws -> MaintenanceSignedApproval {
-        let material = [challenge.bindingDigest, decision.rawValue, deviceKeyID,
+        try sign(challengeBindingDigest: challenge.bindingDigest, decision: decision,
+                 deviceKeyID: deviceKeyID, approvedAt: approvedAt, expiresAt: expiresAt)
+    }
+
+    public func sign(
+        publicChallenge: MaintenanceApprovalPublicChallenge, decision: MaintenanceApprovalDecision,
+        deviceKeyID: String, approvedAt: Date, expiresAt: Date
+    ) throws -> MaintenanceSignedApproval {
+        try sign(challengeBindingDigest: publicChallenge.bindingDigest, decision: decision,
+                 deviceKeyID: deviceKeyID, approvedAt: approvedAt, expiresAt: expiresAt)
+    }
+
+    private func sign(
+        challengeBindingDigest: String, decision: MaintenanceApprovalDecision,
+        deviceKeyID: String, approvedAt: Date, expiresAt: Date
+    ) throws -> MaintenanceSignedApproval {
+        let material = [challengeBindingDigest, decision.rawValue, deviceKeyID,
                         String(approvedAt.timeIntervalSince1970), String(expiresAt.timeIntervalSince1970)]
             .joined(separator: "\u{1F}")
         let key = try Curve25519.Signing.PrivateKey(rawRepresentation: privateKeyData)
         return try MaintenanceSignedApproval(
-            challenge: challenge, decision: decision, deviceKeyID: deviceKeyID,
+            challengeBindingDigest: challengeBindingDigest, decision: decision, deviceKeyID: deviceKeyID,
             approvedAt: approvedAt, expiresAt: expiresAt,
             signature: try key.signature(for: Data(material.utf8)))
     }
@@ -178,11 +206,13 @@ public struct MaintenanceApprovalPublicChallenge: Codable, Equatable, Sendable {
     public let challengeID: String
     public let approvalOrigin: String
     public let expiresAt: Date
+    public let bindingDigest: String
 
     fileprivate init(challenge: MaintenanceApprovalChallenge) {
         challengeID = challenge.challengeID
         approvalOrigin = challenge.approvalOrigin
         expiresAt = challenge.expiresAt
+        bindingDigest = challenge.bindingDigest
     }
 
     public var qrPayload: String { "\(approvalOrigin)/approve/\(challengeID)" }

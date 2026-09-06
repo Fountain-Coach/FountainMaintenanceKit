@@ -138,7 +138,7 @@ final class FountainMaintenanceCoreTests: XCTestCase {
         XCTAssertFalse(publicJSON.contains("nonce-1"))
         XCTAssertEqual(publicChallenge.qrPayload, "https://approve.example.test/approve/challenge-1")
 
-        let approval = try signer.sign(challenge: challenge, decision: .approved, deviceKeyID: "phone-1",
+        let approval = try signer.sign(publicChallenge: publicChallenge, decision: .approved, deviceKeyID: "phone-1",
                                        approvedAt: now, expiresAt: now.addingTimeInterval(120))
         let outcome = try await broker.approve(challengeID: "challenge-1", approval: approval, now: now)
         XCTAssertEqual(outcome.receipt.state, .approved)
