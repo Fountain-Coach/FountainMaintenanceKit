@@ -271,8 +271,12 @@ public actor MaintenanceTrustedDeviceRegistry {
     private var revoked: Set<String> = []
     private let enrollmentAuthority: MaintenanceEnrollmentAuthority
 
-    public init(enrollmentAuthority: MaintenanceEnrollmentAuthority) {
+    public init(
+        enrollmentAuthority: MaintenanceEnrollmentAuthority,
+        persistedPublicKeys: [String: Data] = [:]
+    ) {
         self.enrollmentAuthority = enrollmentAuthority
+        self.publicKeys = persistedPublicKeys
     }
 
     public func register(request: MaintenanceDeviceEnrollmentRequest,
