@@ -1,3 +1,16 @@
+## Current bounded change — enrollment transport envelope reconciliation (2026-09-07)
+
+Capability: make the existing owner-authorized enrollment gate consumable by FountainStore and FountainApprovalHost
+through one `FountainMaintenanceCore` wire contract.
+
+Proof gate: the core owns the signed submission, public QR binding, and redacted terminal receipt; its package tests
+pass; both downstream hosts resolve the same candidate package and compile their focused enrollment tests. No new
+authorization state machine, owner key, Store schema, listener, DNS, TLS, or deployment behavior is introduced.
+
+Implementation intent: move the accidentally duplicated envelope from the monorepo-local maintenance package into
+this released package boundary, then remove that duplicate and update consumers. Release and remote promotion remain
+separate gates after candidate verification.
+
 ## Current bounded change — durable enrollment replay boundary (2026-09-06)
 
 Capability: let the approval-host adapter make one-time enrollment durable across authority instances without moving

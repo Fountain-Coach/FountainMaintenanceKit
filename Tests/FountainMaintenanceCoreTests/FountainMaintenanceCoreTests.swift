@@ -64,6 +64,42 @@ final class FountainMaintenanceCoreTests: XCTestCase {
         }
     }
 
+    func testEnrollmentWireContractIsPublicRedactedAndRoundTrips() throws {
+        let owner = try MaintenanceEnrollmentSigner(privateKeyData: Data(repeating: 9, count: 32))
+        let device = try MaintenanceEnrollmentSigner(privateKeyData: Data(repeating: 10, count: 32))
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let request = try MaintenanceDeviceEnrollmentRequest(
+            deviceKeyID: "owner-device",
+            publicKey: device.publicKey,
+            nonce: "one-time-1",
+            expiresAt: now.addingTimeInterval(300))
+        let authorization = try owner.authorize(
+            request: request,
+            approverKeyID: "owner-primary",
+            approvedAt: now,
+            expiresAt: now.addingTimeInterval(120))
+        let submission = MaintenanceDeviceEnrollmentSubmission(
+            request: request,
+            authorization: authorization)
+        let encoded = try JSONEncoder().encode(submission)
+        XCTAssertEqual(try JSONDecoder().decode(MaintenanceDeviceEnrollmentSubmission.self, from: encoded), submission)
+
+        let payload = try MaintenanceEnrollmentQRPayload(
+            approvalOrigin: "https://approve.fountain.coach/",
+            challengeID: request.nonce,
+            deviceKeyID: request.deviceKeyID,
+            devicePublicKey: request.publicKey,
+            expiresAt: request.expiresAt)
+        XCTAssertEqual(
+            payload.qrPayload,
+            "https://approve.fountain.coach/enroll/one-time-1?device=owner-device&publicKey=\(request.publicKey.base64EncodedString())&expiresAt=1700000300.0")
+        XCTAssertFalse(payload.qrPayload.contains(authorization.signature.base64EncodedString()))
+
+        let receipt = MaintenanceDeviceEnrollmentReceipt(deviceKeyID: request.deviceKeyID, state: "enrolled")
+        XCTAssertTrue(receipt.terminal)
+        XCTAssertEqual(try JSONDecoder().decode(MaintenanceDeviceEnrollmentReceipt.self, from: JSONEncoder().encode(receipt)), receipt)
+    }
+
     func testTypedClientCarriesIdempotencyAndOpaqueReferenceWithoutCredential() async throws {
         let operation = FountainMaintenanceFixtures.request()
         let receipt = MaintenanceValidator.receipt(for: operation, authorization: .pending)

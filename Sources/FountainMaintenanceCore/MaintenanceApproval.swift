@@ -137,6 +137,75 @@ public struct MaintenanceDeviceEnrollmentAuthorization: Codable, Equatable, Send
     }
 }
 
+/// The sole portable wire envelope accepted by an owner-device enrollment host.
+/// It contains the public device binding and owner signature, never private key material.
+public struct MaintenanceDeviceEnrollmentSubmission: Codable, Equatable, Sendable {
+    public let request: MaintenanceDeviceEnrollmentRequest
+    public let authorization: MaintenanceDeviceEnrollmentAuthorization
+
+    public init(
+        request: MaintenanceDeviceEnrollmentRequest,
+        authorization: MaintenanceDeviceEnrollmentAuthorization
+    ) {
+        self.request = request
+        self.authorization = authorization
+    }
+}
+
+/// Redacted terminal response from the enrollment host.
+public struct MaintenanceDeviceEnrollmentReceipt: Codable, Equatable, Sendable {
+    public let deviceKeyID: String
+    public let state: String
+    public let terminal: Bool
+
+    public init(deviceKeyID: String, state: String, terminal: Bool = true) {
+        self.deviceKeyID = deviceKeyID
+        self.state = state
+        self.terminal = terminal
+    }
+}
+
+/// Public-only enrollment binding suitable for QR rendering.
+/// SecretStore references and owner authorization signatures never enter this value.
+public struct MaintenanceEnrollmentQRPayload: Codable, Equatable, Sendable {
+    public let approvalOrigin: String
+    public let challengeID: String
+    public let deviceKeyID: String
+    public let devicePublicKey: Data
+    public let expiresAt: Date
+
+    public init(
+        approvalOrigin: String,
+        challengeID: String,
+        deviceKeyID: String,
+        devicePublicKey: Data,
+        expiresAt: Date
+    ) throws {
+        guard let origin = URL(string: approvalOrigin),
+              origin.scheme?.lowercased() == "https",
+              origin.host != nil,
+              !challengeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !deviceKeyID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              (try? Curve25519.Signing.PublicKey(rawRepresentation: devicePublicKey)) != nil else {
+            throw MaintenanceApprovalVerificationError.invalidEnrollment
+        }
+        self.approvalOrigin = approvalOrigin.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        self.challengeID = challengeID
+        self.deviceKeyID = deviceKeyID
+        self.devicePublicKey = devicePublicKey
+        self.expiresAt = expiresAt
+    }
+
+    public var qrPayload: String {
+        let query = [
+            "device=\(deviceKeyID)",
+            "publicKey=\(devicePublicKey.base64EncodedString())",
+            "expiresAt=\(String(expiresAt.timeIntervalSince1970))"
+        ].joined(separator: "&")
+        return "\(approvalOrigin)/enroll/\(challengeID)?\(query)"
+    }
+}
+
 public protocol MaintenanceEnrollmentReplayStore: Sendable {
     /// Atomically consume a binding digest. `true` admits it; `false` means it
     /// was already consumed by this durable store.
